@@ -340,11 +340,11 @@ public abstract class DruidAbstractDataSource extends WrapperAdapter implements 
     }
 
     public boolean isUseUnfairLock() {
-        return lock.isFair();
+        return !lock.isFair();
     }
 
     public void setUseUnfairLock(boolean useUnfairLock) {
-        if (lock.isFair() == !useUnfairLock) {
+        if (lock.isFair() == !useUnfairLock && this.useUnfairLock != null) {
             return;
         }
 
@@ -795,7 +795,7 @@ public abstract class DruidAbstractDataSource extends WrapperAdapter implements 
             LOG.error("maxEvictableIdleTimeMillis should be greater than 30000");
         }
         
-        if (maxEvictableIdleTimeMillis < minEvictableIdleTimeMillis) {
+        if (inited && maxEvictableIdleTimeMillis < minEvictableIdleTimeMillis) {
             throw new IllegalArgumentException("maxEvictableIdleTimeMillis must be grater than minEvictableIdleTimeMillis");
         }
         
