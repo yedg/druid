@@ -15,6 +15,7 @@
  */
 package com.alibaba.druid.sql.ast.statement;
 
+import com.alibaba.druid.DbType;
 import com.alibaba.druid.sql.SQLUtils;
 import com.alibaba.druid.sql.ast.*;
 import com.alibaba.druid.sql.ast.expr.*;
@@ -52,6 +53,8 @@ public class SQLSelectQueryBlock extends SQLObjectImpl implements SQLSelectQuery
     protected boolean                    parenthesized   = false;
     protected boolean                    forUpdate       = false;
     protected boolean                    noWait          = false;
+    protected boolean                    skipLocked      = false;
+    protected boolean                    forShare        = false;
     protected SQLExpr                    waitTime;
     protected SQLLimit                   limit;
 
@@ -64,14 +67,14 @@ public class SQLSelectQueryBlock extends SQLObjectImpl implements SQLSelectQuery
     protected String                     cachedSelectList; // optimized for SelectListCache
     protected long                       cachedSelectListHash; // optimized for SelectListCache
 
-    protected String                     dbType;
+    protected DbType                     dbType;
     protected List<SQLCommentHint>       hints;
 
     public SQLSelectQueryBlock(){
 
     }
 
-    public SQLSelectQueryBlock(String dbType){
+    public SQLSelectQueryBlock(DbType dbType){
         this.dbType = dbType;
     }
 
@@ -166,7 +169,9 @@ public class SQLSelectQueryBlock extends SQLObjectImpl implements SQLSelectQuery
                         SQLInListExpr inListItem = (SQLInListExpr) item;
                         if (inListExpr.getExpr().equals(inListItem.getExpr())) {
                             TreeSet<SQLExpr> set = new TreeSet<SQLExpr>();
-                            set.addAll(inListItem.getTargetList());
+                            for (SQLExpr itemItem : inListItem.getTargetList()) {
+                                set.add(itemItem);
+                            }
 
                             List<SQLExpr> andList = new ArrayList<SQLExpr>();
                             for (SQLExpr exprItem : inListExpr.getTargetList()) {
@@ -193,6 +198,68 @@ public class SQLSelectQueryBlock extends SQLObjectImpl implements SQLSelectQuery
 
         where = SQLBinaryOpExpr.and(this.where, condition);
         where.setParent(this);
+    }
+
+    public void addWhereForDynamicFilter(SQLExpr condition) {
+        if (condition == null) {
+            return;
+        }
+
+        if (where == null) {
+            condition.setParent(this);
+            where = condition;
+            return;
+        }
+
+        if ((where instanceof SQLBinaryOpExpr
+                || where instanceof SQLBinaryOpExprGroup)) {
+            List<SQLExpr> items = SQLBinaryOpExpr.split(where, SQLBinaryOperator.BooleanAnd);
+            for (SQLExpr item : items) {
+                if (condition.equals(item)) {
+                    return;
+                }
+
+                if (condition instanceof SQLInListExpr) {
+                    SQLInListExpr inListExpr = (SQLInListExpr) condition;
+
+                    if (item instanceof SQLBinaryOpExpr) {
+                        SQLBinaryOpExpr binaryOpItem = (SQLBinaryOpExpr) item;
+                        SQLExpr left = binaryOpItem.getLeft();
+                        SQLExpr right = binaryOpItem.getRight();
+                        if (inListExpr.getExpr().equals(left)) {
+                            if (inListExpr.getTargetList().contains(right)) {
+                                replace(item, inListExpr);
+                            } else {
+                                SQLInListExpr inListExpr2 = inListExpr.clone();
+                                inListExpr2.addTarget(right.clone());
+                                replace(item, inListExpr2);
+                            }
+                            return;
+                        }
+                    } else {
+                        if (item instanceof SQLInListExpr) {
+                            SQLInListExpr inListItem = (SQLInListExpr) item;
+                            if (inListExpr.getExpr().equals(inListItem.getExpr())) {
+                                TreeSet<SQLExpr> set = new TreeSet<SQLExpr>();
+                                for (SQLExpr itemItem : inListItem.getTargetList()) {
+                                    set.add(itemItem);
+                                }
+                                for (SQLExpr exprItem : inListExpr.getTargetList()) {
+                                    if (!set.contains(exprItem)) {
+                                        inListItem.addTarget(exprItem.clone());
+                                    }
+                                }
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        where = SQLBinaryOpExpr.and(this.where, condition);
+        where.setParent(this);
+
     }
 
     public void whereOr(SQLExpr condition) {
@@ -226,7 +293,7 @@ public class SQLSelectQueryBlock extends SQLObjectImpl implements SQLSelectQuery
 
         groupBy.addHaving(condition);
     }
-
+    
     public SQLOrderBy getOrderBy() {
         return orderBy;
     }
@@ -235,7 +302,7 @@ public class SQLSelectQueryBlock extends SQLObjectImpl implements SQLSelectQuery
         if (orderBy != null) {
             orderBy.setParent(this);
         }
-
+        
         this.orderBy = orderBy;
     }
 
@@ -362,7 +429,7 @@ public class SQLSelectQueryBlock extends SQLObjectImpl implements SQLSelectQuery
     public SQLSelectItem getSelectItem(int i) {
         return this.selectList.get(i);
     }
-
+    
     public void addSelectItem(SQLSelectItem item) {
         this.selectList.add(item);
         item.setParent(this);
@@ -447,13 +514,13 @@ public class SQLSelectQueryBlock extends SQLObjectImpl implements SQLSelectQuery
     }
 
     public boolean isParenthesized() {
-        return parenthesized;
-    }
+		return parenthesized;
+	}
 
-    public void setParenthesized(boolean parenthesized) {
-        this.parenthesized = parenthesized;
-    }
-
+	public void setParenthesized(boolean parenthesized) {
+		this.parenthesized = parenthesized;
+	}
+	
     public boolean isForUpdate() {
         return forUpdate;
     }
@@ -461,7 +528,7 @@ public class SQLSelectQueryBlock extends SQLObjectImpl implements SQLSelectQuery
     public void setForUpdate(boolean forUpdate) {
         this.forUpdate = forUpdate;
     }
-
+    
     public boolean isNoWait() {
         return noWait;
     }
@@ -470,10 +537,26 @@ public class SQLSelectQueryBlock extends SQLObjectImpl implements SQLSelectQuery
         this.noWait = noWait;
     }
 
+    public boolean isSkipLocked() {
+        return skipLocked;
+    }
+
+    public void setSkipLocked(boolean skipLocked) {
+        this.skipLocked = skipLocked;
+    }
+
+    public boolean isForShare() {
+        return forShare;
+    }
+
+    public void setForShare(boolean forShare) {
+        this.forShare = forShare;
+    }
+
     public SQLExpr getWaitTime() {
         return waitTime;
     }
-
+    
     public void setWaitTime(SQLExpr waitTime) {
         if (waitTime != null) {
             waitTime.setParent(this);
@@ -490,6 +573,15 @@ public class SQLSelectQueryBlock extends SQLObjectImpl implements SQLSelectQuery
             limit.setParent(this);
         }
         this.limit = limit;
+    }
+
+    public void mergeLimit(SQLLimit limit) {
+        if (this.limit == null) {
+            this.limit = limit.clone();
+            return;
+        }
+
+        this.limit.merge(limit);
     }
 
     public SQLExpr getFirst() {
@@ -616,7 +708,7 @@ public class SQLSelectQueryBlock extends SQLObjectImpl implements SQLSelectQuery
         this.sortBy.add(item);
     }
 
-    @Override
+	@Override
     protected void accept0(SQLASTVisitor visitor) {
         if (visitor.visit(this)) {
             for (int i = 0; i < this.selectList.size(); i++) {
@@ -912,6 +1004,8 @@ public class SQLSelectQueryBlock extends SQLObjectImpl implements SQLSelectQuery
         x.parenthesized = parenthesized;
         x.forUpdate = forUpdate;
         x.noWait = noWait;
+        x.skipLocked = skipLocked;
+        x.forShare = forShare;
         if (waitTime != null) {
             x.setWaitTime(waitTime.clone());
         }
@@ -1095,6 +1189,11 @@ public class SQLSelectQueryBlock extends SQLObjectImpl implements SQLSelectQuery
         SQLObject object = resolveColum(columnNameHash);
         if (object instanceof SQLColumnDefinition) {
             return (SQLColumnDefinition) object;
+        } else if (object instanceof SQLSelectItem) {
+            SQLExpr expr = ((SQLSelectItem) object).getExpr();
+            if (expr instanceof SQLName) {
+                return ((SQLName) expr).getResolvedColumn();
+            }
         }
         return null;
     }
@@ -1232,11 +1331,11 @@ public class SQLSelectQueryBlock extends SQLObjectImpl implements SQLSelectQuery
         return cachedSelectListHash;
     }
 
-    public String getDbType() {
+    public DbType getDbType() {
         return dbType;
     }
 
-    public void setDbType(String dbType) {
+    public void setDbType(DbType dbType) {
         this.dbType = dbType;
     }
 
